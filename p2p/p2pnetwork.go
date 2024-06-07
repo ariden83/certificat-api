@@ -12,8 +12,15 @@ import (
 )
 
 const (
+	// broadcastPort est le numéro de port sur lequel les messages UDP seront envoyés pour la diffusion.
+	// C'est le port sur lequel les autres pairs écoutent pour détecter les nouveaux pairs sur le réseau.
+	// Dans cet exemple, il est défini comme 9999.
 	broadcastPort = 9999
 	tcpPort       = 8888
+	// broadcastAddr est l'adresse IP de diffusion, c'est-à-dire l'adresse à laquelle les messages UDP
+	// seront envoyés pour être diffusés à tous les pairs connectés au même réseau local.
+	// Dans cet exemple, il est défini comme 255.255.255.255, qui est l'adresse IP de diffusion par défaut
+	// pour les réseaux IPv4.
 	broadcastAddr = "255.255.255.255"
 	maxRetries    = 5
 	retryDelay    = 2 * time.Second
@@ -39,27 +46,37 @@ func main() {
 	select {}
 }
 
+// broadcastPresence diffuse périodiquement la présence du pair sur le réseau en utilisant UDP.
+// Il envoie un message contenant l'adresse IP locale du pair sur l'adresse de diffusion spécifiée.
+// Cela permet aux autres pairs de découvrir et d'ajouter ce pair à leur liste de pairs actifs.
 func broadcastPresence() {
+	// Résolution de l'adresse UDP pour la diffusion sur le port spécifié
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", broadcastAddr, broadcastPort))
 	if err != nil {
-		fmt.Println("Erreur lors de la résolution de l'adresse UDP:", err)
+		log.Println("Erreur lors de la résolution de l'adresse UDP:", err)
 		return
 	}
 
+	// Connexion UDP pour l'envoi de messages de diffusion
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
-		fmt.Println("Erreur lors de la connexion UDP:", err)
+		log.Println("Erreur lors de la connexion UDP:", err)
 		return
 	}
 	defer conn.Close()
 
+	// Boucle pour envoyer périodiquement des messages de présence
 	for {
+		// Construction du message de présence contenant l'adresse IP locale
 		message := fmt.Sprintf("peer:%s", getLocalIP())
+
+		// Envoi du message de présence via la connexion UDP
 		_, err := conn.Write([]byte(message))
 		if err != nil {
-			fmt.Println("Erreur lors de l'envoi du message UDP:", err)
+			log.Println("Erreur lors de l'envoi du message UDP:", err)
 		}
 
+		// Attente avant d'envoyer le prochain message de présence
 		time.Sleep(5 * time.Second)
 	}
 }
