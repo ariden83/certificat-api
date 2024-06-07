@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -13,6 +15,8 @@ const (
 	broadcastPort = 9999
 	tcpPort       = 8888
 	broadcastAddr = "255.255.255.255"
+	maxRetries    = 5
+	retryDelay    = 2 * time.Second
 )
 
 var peers = make(map[string]bool)
@@ -130,14 +134,22 @@ func handleTCPConnection(conn net.Conn) {
 	fmt.Println("Message reçu:", message)
 
 	response := "Message reçu avec succès"
-	conn.Write([]byte(response))
+	_, err = conn.Write([]byte(response))
+	if err != nil {
+		log.Println("Erreur lors de l'envoi de la réponse TCP:", err)
+	}
 }
 
 func connectToPeers() {
 	for {
 		peersLock.Lock()
 		for peer := range peers {
-			go connectToPeer(peer)
+			go func(peer string) {
+				err := retryableDial(peer)
+				if err != nil {
+					log.Println("Erreur lors de la connexion à", peer, ":", err)
+				}
+			}(peer)
 		}
 		peersLock.Unlock()
 		time.Sleep(10 * time.Second)
@@ -183,4 +195,56 @@ func getLocalIP() string {
 		}
 	}
 	return ""
+}
+
+func retryableDial(peer string) error {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", peer, tcpPort))
+		if err == nil {
+			defer conn.Close()
+			message := "Hello from " + getLocalIP()
+			_, err = conn.Write([]byte(message))
+			if err != nil {
+				log.Println("Erreur lors de l'envoi du message TCP:", err)
+				return err
+			}
+
+			buf := make([]byte, 1024)
+			n, err := conn.Read(buf)
+			if err != nil {
+				log.Println("Erreur lors de la lecture de la réponse TCP:", err)
+				return err
+			}
+
+			response := string(buf[:n])
+			log.Println("Réponse de", peer, ":", response)
+			return nil
+		}
+
+		if !isRetryableError(err) {
+			return err
+		}
+
+		log.Printf("Tentative %d: Échec de la connexion à %s, nouvelle tentative dans %s", attempt, peer, retryDelay)
+		time.Sleep(retryDelay)
+	}
+	return errors.New("nombre maximum de tentatives atteint")
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	netErr, ok := err.(net.Error)
+	if ok && netErr.Temporary() {
+		return true
+	}
+
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "timeout") {
+		return true
+	}
+
+	return false
 }
